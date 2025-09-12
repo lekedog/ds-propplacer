@@ -6,7 +6,7 @@ This script allows the gods and admins to place and delete props in-game using R
 - Requires [RSG Core](https://github.com/RSG-Framework/rsg-core) installed and running.
 - Clone `ds-propplacer` into your resources folder.
 - Add the SQL provided to your Database.
-- In the sv_main.lua make the necessary change to the OWNER CID at the TOP of Resource
+- In the config.lua make the necessary change to the OWNER CID
 - Add `ensure ds-propplacer` to your `server.cfg` after `ensure rsg-core`.
 - Restart Server
 
