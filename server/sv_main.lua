@@ -1,46 +1,59 @@
 local RSGCore = exports['rsg-core']:GetCoreObject()
-local SERVER_OWNER_CITIZENID = "########" -- Server owner citizenid <-- CHANGE THIS TO YOUR CITIZENID
+local Config = load(LoadResourceFile(GetCurrentResourceName(), 'config.lua'))()
+local SERVER_OWNER_CITIZENID = Config.ServerOwnerCitizenId
 local Props = {}
+
+-- propid will be integer autoincrement from DB
+
+local function hasPermission(Player, action)
+    if not Player or not Player.PlayerData then return false end
+    local group = Player.PlayerData.group
+    local cid = Player.PlayerData.citizenid
+    print('[ds-propplacer] Player group:', group, 'CitizenID:', cid)
+    if action == "place" or action == "remove" then
+        -- Allow if player is admin, god, or matches configured CitizenID
+        if group == "admin" or group == "god" or cid == SERVER_OWNER_CITIZENID then
+            return true
+        end
+    end
+    return false
+end
 
 -- Load all props from DB on resource start
 CreateThread(function()
     exports.oxmysql:fetch('SELECT * FROM ds_props', {}, function(result)
         if result then
             for i = 1, #result do
-                local propData = json.decode(result[i].properties)
-                Props[propData.id] = propData
+                local propData = nil
+                local success, err = pcall(function()
+                    propData = json.decode(result[i].properties)
+                end)
+                if success and propData and propData.id then
+                    Props[propData.id] = propData
+                else
+                    print('[ds-propplacer] Error decoding propData:', err, result[i])
+                end
             end
         end
     end)
 end)
 
--- Send all props to client on request
 RegisterNetEvent('ds-propplacer:server:getProps')
 AddEventHandler('ds-propplacer:server:getProps', function()
     local src = source
     TriggerClientEvent('ds-propplacer:client:updatePropData', src, Props)
 end)
 
--- Place new prop
-local function isOwner(Player)
-    return Player and Player.PlayerData.citizenid == SERVER_OWNER_CITIZENID
-end
-
 RegisterServerEvent('ds-propplacer:server:newProp')
 AddEventHandler('ds-propplacer:server:newProp', function(proptype, position, heading, hash)
     local src = source
     local Player = RSGCore.Functions.GetPlayer(src)
-    if not isOwner(Player) then
+    if not hasPermission(Player, "place") then
         TriggerClientEvent('ox_lib:notify', src, {title = 'No permission to place props.', type = 'error', duration = 7000})
         return
     end
 
-    -- Generate unique propId (preferably with DB or UUID)
-    local propId = math.random(111111, 999999)
-    -- TODO: Replace with DB-generated ID or UUID
-
     local PropData = {
-        id = propId,
         proptype = proptype,
         x = position.x,
         y = position.y,
@@ -51,40 +64,38 @@ AddEventHandler('ds-propplacer:server:newProp', function(proptype, position, hea
         buildttime = os.time()
     }
 
-    Props[propId] = PropData
-
-    local insertData = {
-        ['@properties'] = json.encode(PropData),
-        ['@propid'] = propId,
-        ['@citizenid'] = Player.PlayerData.citizenid,
-        ['@proptype'] = proptype,
-    }
-
-    -- SQL: Rely on DB constraints for uniqueness
-    exports.oxmysql:execute('INSERT INTO ds_props (properties, propid, citizenid, proptype) VALUES (@properties, @propid, @citizenid, @proptype)', insertData, function(result)
-        if result then
-            print('[ds-propplacer] Insert result:', result)
+    exports.oxmysql:insert('INSERT INTO ds_props (properties, citizenid, proptype) VALUES (?, ?, ?)', {
+        json.encode(PropData),
+        Player.PlayerData.citizenid,
+        proptype
+    }, function(insertId)
+        if insertId then
+            Props[insertId] = PropData
+            TriggerClientEvent('ds-propplacer:client:propPlaced', src, insertId)
+            TriggerClientEvent('ox_lib:notify', src, {title = 'Prop Placed! ID: '..insertId, type = 'success', duration = 7000})
+            TriggerClientEvent('ds-propplacer:client:updatePropData', -1, { [insertId] = PropData })
         else
-            print('[ds-propplacer] Error inserting prop:', propId)
+            TriggerClientEvent('ox_lib:notify', src, {title = 'DB error: Could not place prop.', type = 'error', duration = 7000})
         end
     end)
-
-    TriggerClientEvent('ds-propplacer:client:propPlaced', src, propId)
-    TriggerClientEvent('ox_lib:notify', src, {title = 'Prop Placed! ID: '..propId, type = 'success', duration = 7000})
-    TriggerClientEvent('ds-propplacer:client:updatePropData', -1, Props)
 end)
 
--- Remove prop
 RegisterServerEvent('ds-propplacer:server:removeProp')
 AddEventHandler('ds-propplacer:server:removeProp', function(propid)
     local src = source
     local Player = RSGCore.Functions.GetPlayer(src)
-    if not Player or Player.PlayerData.citizenid ~= SERVER_OWNER_CITIZENID then
+    if not hasPermission(Player, "remove") then
         TriggerClientEvent('ox_lib:notify', src, {title = 'No permission to delete props.', type = 'error', duration = 7000 })
         return
     end
-    Props[propid] = nil
-    exports.oxmysql:execute('DELETE FROM ds_props WHERE propid = @propid', {['@propid'] = propid})
-    TriggerClientEvent('ds-propplacer:client:removePropObject', -1, propid)
-    TriggerClientEvent('ds-propplacer:client:updatePropData', -1, Props)
+    exports.oxmysql:execute('DELETE FROM ds_props WHERE propid = @propid', {['@propid'] = propid}, function(result)
+        if result then
+            Props[propid] = nil
+            TriggerClientEvent('ds-propplacer:client:removePropObject', -1, propid)
+            TriggerClientEvent('ds-propplacer:client:updatePropData', -1, { [propid] = false })
+        else
+            print('[ds-propplacer] Error deleting prop:', propid)
+            TriggerClientEvent('ox_lib:notify', src, {title = 'DB error: Could not delete prop.', type = 'error', duration = 7000 })
+        end
+    end)
 end)
