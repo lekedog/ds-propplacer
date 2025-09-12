@@ -15,4 +15,6 @@ This script allows Server Owners to place and delete props in-game using RSG Cor
 - `/removeprop [ID]` — Delete the placed prop
 - `/listprops` — to list prop IDs in the F8 console
 
+To find prop name's go to [Prop Lookup](https://redlookup.com/)
+
 **Note:** Only the OWNER can place or delete props. (changes in the future)
