@@ -1,6 +1,6 @@
 # ds-propplacer
 A Prop Placer for RSG Core (RedM)
-This script allows admins to place and delete props in-game using RSG Core permissions and notifications.
+This script allows Server Owners to place and delete props in-game using RSG Core permissions and notifications.
 
 ## 1. Installation
 - Requires [RSG Core](https://github.com/RSG-Framework/rsg-core) installed and running.
