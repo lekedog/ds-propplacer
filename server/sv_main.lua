@@ -72,7 +72,6 @@ AddEventHandler('ds-propplacer:server:newProp', function(proptype, position, hea
         if insertId then
             Props[insertId] = PropData
             TriggerClientEvent('ds-propplacer:client:propPlaced', src, insertId)
-            TriggerClientEvent('ox_lib:notify', src, {title = 'Prop Placed! ID: '..insertId, type = 'success', duration = 7000})
             TriggerClientEvent('ds-propplacer:client:updatePropData', -1, { [insertId] = PropData })
         else
             TriggerClientEvent('ox_lib:notify', src, {title = 'DB error: Could not place prop.', type = 'error', duration = 7000})
