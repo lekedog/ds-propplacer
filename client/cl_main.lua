@@ -1,6 +1,7 @@
 local RSGCore = exports['rsg-core']:GetCoreObject()
 local Props = {}
 local SpawnedProps = {}
+local AllProps = {}
 local PromptPlacerGroup = GetRandomIntInRange(0, 0xffffff)
 local CancelPrompt, SetPrompt, RotateLeftPrompt, RotateRightPrompt
 
@@ -124,8 +125,9 @@ end)
 --------------------------------------------------------
 RegisterCommand('removeprop', function(source, args, rawCommand)
     local propid = args[1]
+    print('[ds-propplacer] Remove prop command called with propid:', propid)
     if propid then
-        TriggerServerEvent('ds-propplacer:server:removeProp', propid)
+        TriggerServerEvent('ds-propplacer:server:removeProp', tonumber(propid))
     else
         exports['ox_lib']:notify({title = 'Usage: /removeprop [propid]', type = 'error', duration = 5000})
     end
@@ -139,33 +141,96 @@ RegisterCommand('listprops', function()
     end
 end)
 
+
 RegisterNetEvent('ds-propplacer:client:updatePropData', function(props)
-    Props = props
-    for id, obj in pairs(SpawnedProps) do
-        if DoesEntityExist(obj) then
-            DeleteEntity(obj)
-        end
-        SpawnedProps[id] = nil
-    end
-    for id, propData in pairs(Props) do
+    print('[ds-propplacer] Props table received:', json.encode(props))
+    -- Build new AllProps table
+    local newProps = {}
+    for id, propData in pairs(props) do
         if type(propData) == "boolean" then goto continue end
-        local model = propData.hash or propData.model
-        if model and RequestAndLoadModel(model) then
-            local groundZ = propData.z
-            local found, z = GetGroundZFor_3dCoord(propData.x, propData.y, propData.z)
-            if found then groundZ = z end
-            local obj = CreateObject(model, propData.x, propData.y, groundZ, false, false, false)
-            SetEntityHeading(obj, propData.h or 0.0)
-            SpawnedProps[id] = obj
-        end
+        propData.id = id
+        newProps[#newProps + 1] = propData
         ::continue::
+    end
+
+    -- Remove any spawned props that are no longer present
+    for i = #SpawnedProps, 1, -1 do
+        local found = false
+        local p = SpawnedProps[i]
+        for _, np in ipairs(newProps) do
+            if tostring(np.id) == tostring(p.id) then
+                found = true
+                break
+            end
+        end
+        if not found then
+            if DoesEntityExist(p.obj) then
+                DeleteEntity(p.obj)
+            end
+            table.remove(SpawnedProps, i)
+        end
+    end
+
+    AllProps = newProps
+end)
+
+CreateThread(function()
+    while true do
+        Wait(150)
+        local pos = GetEntityCoords(PlayerPedId())
+        local InRange = false
+        for i = 1, #AllProps do
+            local prop = vector3(AllProps[i].x, AllProps[i].y, AllProps[i].z)
+            local dist = #(pos - prop)
+            if dist >= 50.0 then goto continue end
+            local hasSpawned = false
+            InRange = true
+            for z = 1, #SpawnedProps do
+                local p = SpawnedProps[z]
+                if p and p.id == AllProps[i].id then
+                    hasSpawned = true
+                end
+            end
+            if hasSpawned then goto continue end
+            local modelHash = AllProps[i].hash
+            if not modelHash then goto continue end
+            RequestAndLoadModel(modelHash)
+            local data = {}
+            local groundZ = AllProps[i].z
+            local found, z = GetGroundZFor_3dCoord(AllProps[i].x, AllProps[i].y, AllProps[i].z)
+            local attempts = 0
+            while not found and attempts < 200 do -- up to 10 seconds
+                Wait(50)
+                found, z = GetGroundZFor_3dCoord(AllProps[i].x, AllProps[i].y, AllProps[i].z)
+                attempts = attempts + 1
+            end
+            if found then groundZ = z end
+            data.obj = CreateObject(modelHash, AllProps[i].x, AllProps[i].y, groundZ + -0.2, false, false, false)
+            SetEntityHeading(data.obj, AllProps[i].h or 0.0)
+            SetEntityAsMissionEntity(data.obj, true)
+            Wait(1000)
+            FreezeEntityPosition(data.obj, true)
+            SetModelAsNoLongerNeeded(data.obj)
+            data.id = AllProps[i].id
+            SpawnedProps[#SpawnedProps + 1] = data
+            hasSpawned = false
+            ::continue::
+        end
+        if not InRange then
+            Wait(5000)
+        end
     end
 end)
 
 RegisterNetEvent('ds-propplacer:client:removePropObject', function(propid)
-    Props[propid] = nil
-    if SpawnedProps[propid] and DoesEntityExist(SpawnedProps[propid]) then
-        DeleteEntity(SpawnedProps[propid])
-        SpawnedProps[propid] = nil
+    print('[ds-propplacer] Client removePropObject called with propid:', propid)
+    for i = #SpawnedProps, 1, -1 do
+        local p = SpawnedProps[i]
+            if p and tostring(p.id) == tostring(propid) then
+                if DoesEntityExist(p.obj) then
+                    DeleteEntity(p.obj)
+                end
+                table.remove(SpawnedProps, i)
+        end
     end
 end)
