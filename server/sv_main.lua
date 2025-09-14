@@ -1,118 +1,236 @@
 local RSGCore = exports['rsg-core']:GetCoreObject()
-local Config = load(LoadResourceFile(GetCurrentResourceName(), 'config.lua'))()
-local SERVER_OWNER_CITIZENID = Config.ServerOwnerCitizenId
 local Props = {}
-local PropsLoaded = false
+local SpawnedProps = {}
+local AllProps = {}
+local PromptPlacerGroup = GetRandomIntInRange(0, 0xffffff)
+local CancelPrompt, SetPrompt, RotateLeftPrompt, RotateRightPrompt
 
--- propid will be integer autoincrement from DB
-
-local function hasPermission(Player, action)
-    if not Player or not Player.PlayerData then return false end
-    local group = Player.PlayerData.group
-    local cid = Player.PlayerData.citizenid
-    print('[ds-propplacer] Player group:', group, 'CitizenID:', cid)
-    if action == "place" or action == "remove" then
-        -- Allow if player is admin, god, or matches configured CitizenID
-        if group == "admin" or group == "god" or cid == SERVER_OWNER_CITIZENID then
-            return true
+-- Utility: Register prompts
+local function RegisterPrompt(name, control, holdMode, standardMode)
+    Citizen.CreateThread(function()
+        local prompt = PromptRegisterBegin()
+        PromptSetControlAction(prompt, control)
+        local str = CreateVarString(10, 'LITERAL_STRING', name)
+        PromptSetText(prompt, str)
+        PromptSetEnabled(prompt, true)
+        PromptSetVisible(prompt, true)
+        if holdMode then PromptSetHoldMode(prompt, true) end
+        if standardMode then PromptSetStandardMode(prompt, true) end
+        PromptSetGroup(prompt, PromptPlacerGroup)
+        PromptRegisterEnd(prompt)
+        if name == "Cancel" then CancelPrompt = prompt
+        elseif name == "Set" then SetPrompt = prompt
+        elseif name == "Rotate Left" then RotateLeftPrompt = prompt
+        elseif name == "Rotate Right" then RotateRightPrompt = prompt
         end
-    end
-    return false
+    end)
 end
 
--- Load all props from DB on resource start
-CreateThread(function()
-    TriggerEvent('ds-propplacer:server:getProps')
-    PropsLoaded = true
+Citizen.CreateThread(function()
+    RegisterPrompt('Set', 0x07CE1E61, true, false)
+    RegisterPrompt('Cancel', 0xF84FA74F, true, false)
+    RegisterPrompt('Rotate Left', 0xA65EBAB4, false, true)
+    RegisterPrompt('Rotate Right', 0xDEB34313, false, true)
 end)
 
--- Periodically sync props to all clients
+local function RequestAndLoadModel(model)
+    RequestModel(model)
+    local timeout = 10000
+    local waited = 0
+    while not HasModelLoaded(model) do
+        Wait(50)
+        waited = waited + 50
+        if waited >= timeout then
+            print('[ds-propplacer] Model load timeout:', model)
+            return false
+        end
+    end
+    return true
+end
+
+function PropPlacer(proptype, ObjectModel)
+    local myPed = PlayerPedId()
+    local pHead = GetEntityHeading(myPed)
+    local pos = GetEntityCoords(myPed)
+    local PropHash = GetHashKey(ObjectModel)
+    local coords = GetEntityCoords(myPed)
+    local _x, _y, _z = table.unpack(coords)
+    local forward = GetEntityForwardVector(myPed)
+    local x, y, z = table.unpack(pos - forward * -2.0)
+    local ox, oy, oz = x - _x, y - _y, z - _z
+    local heading = 0.0
+
+    SetCurrentPedWeapon(myPed, -1569615261, true)
+    if not RequestAndLoadModel(PropHash) then
+        exports['ox_lib']:notify({title = 'Could not load model: '..ObjectModel, type = 'error', duration = 5000})
+        return
+    end
+
+    local tempObj = CreateObject(PropHash, pos.x, pos.y, pos.z, false, false, false)
+    local tempObj2 = CreateObject(PropHash, pos.x, pos.y, pos.z, false, false, false)
+    AttachEntityToEntity(tempObj2, myPed, 0, ox, oy, 0.5, 0.0, 0.0, 0, true, false, false, false, false)
+    SetEntityAlpha(tempObj, 180)
+    SetEntityAlpha(tempObj2, 0)
+
+    while true do
+        Wait(5)
+        local PropPlacerGroupName = CreateVarString(10, 'LITERAL_STRING', "PropPlacer")
+        PromptSetActiveGroupThisFrame(PromptPlacerGroup, PropPlacerGroupName)
+        AttachEntityToEntity(tempObj, myPed, 0, ox, oy, -0.8, 0.0, 0.0, heading, true, false, false, false, false)
+
+        if IsControlPressed(1, 0xA65EBAB4) then
+            heading = heading - 1
+        end
+        if IsControlPressed(1, 0xDEB34313) then
+            heading = heading + 1
+        end
+
+        local pPos = GetEntityCoords(tempObj2)
+
+        if PromptHasHoldModeCompleted(SetPrompt) then
+            FreezeEntityPosition(myPed, true)
+            TriggerServerEvent('ds-propplacer:server:newProp', proptype, pPos, heading, PropHash)
+            DeleteEntity(tempObj2)
+            DeleteEntity(tempObj)
+            FreezeEntityPosition(myPed, false)
+            break
+        end
+
+        if PromptHasHoldModeCompleted(CancelPrompt) then
+            DeleteEntity(tempObj2)
+            DeleteEntity(tempObj)
+            SetModelAsNoLongerNeeded(PropHash)
+            break
+        end
+    end
+end
+
+RegisterNetEvent('ds-propplacer:client:propPlaced', function(propId)
+    exports['ox_lib']:notify({title = 'Prop placed! ID: '..tostring(propId), type = 'success', duration = 7000})
+end)
+--------------------------------------------------------
+--place prop command
+--------------------------------------------------------
+RegisterCommand('placeprop', function(_, args)
+    local proptype = args[1] or 'default'
+    local model = args[2]
+    if not model then
+        exports['ox_lib']:notify({title = 'Usage: /placeprop [type] [model]', type = 'error', duration = 5000})
+        return
+    end
+    PropPlacer(proptype, model)
+end)
+--------------------------------------------------------
+--remove prop command
+--------------------------------------------------------
+RegisterCommand('removeprop', function(source, args, rawCommand)
+    local propid = args[1]
+    print('[ds-propplacer] Remove prop command called with propid:', propid)
+    if propid then
+        TriggerServerEvent('ds-propplacer:server:removeProp', tonumber(propid))
+    else
+        exports['ox_lib']:notify({title = 'Usage: /removeprop [propid]', type = 'error', duration = 5000})
+    end
+end)
+--------------------------------------------------------
+--list props command
+--------------------------------------------------------
+RegisterCommand('listprops', function()
+    for id, propData in pairs(Props) do
+        print('Prop ID:', id, 'Type:', propData.proptype, 'Model:', propData.hash or propData.model)
+    end
+end)
+
+
+RegisterNetEvent('ds-propplacer:client:updatePropData', function(props)
+    print('[ds-propplacer] Props table received:', json.encode(props))
+    -- Build new AllProps table
+    local newProps = {}
+    for id, propData in pairs(props) do
+        if type(propData) == "boolean" then goto continue end
+        propData.id = id
+        newProps[#newProps + 1] = propData
+        ::continue::
+    end
+
+    -- Remove any spawned props that are no longer present
+    for i = #SpawnedProps, 1, -1 do
+        local found = false
+        local p = SpawnedProps[i]
+        for _, np in ipairs(newProps) do
+            if tostring(np.id) == tostring(p.id) then
+                found = true
+                break
+            end
+        end
+        if not found then
+            if DoesEntityExist(p.obj) then
+                DeleteEntity(p.obj)
+            end
+            table.remove(SpawnedProps, i)
+        end
+    end
+
+    AllProps = newProps
+end)
+
 CreateThread(function()
     while true do
-        Wait(5000)
-        if PropsLoaded then
-            TriggerClientEvent('ds-propplacer:client:updatePropData', -1, Props)
+        Wait(150)
+        local pos = GetEntityCoords(PlayerPedId())
+        local InRange = false
+        for i = 1, #AllProps do
+            local prop = vector3(AllProps[i].x, AllProps[i].y, AllProps[i].z)
+            local dist = #(pos - prop)
+            if dist >= 50.0 then goto continue end
+            local hasSpawned = false
+            InRange = true
+            for z = 1, #SpawnedProps do
+                local p = SpawnedProps[z]
+                if p and p.id == AllProps[i].id then
+                    hasSpawned = true
+                end
+            end
+            if hasSpawned then goto continue end
+            local modelHash = AllProps[i].hash
+            if not modelHash then goto continue end
+            RequestAndLoadModel(modelHash)
+            local data = {}
+            local groundZ = AllProps[i].z
+            local found, z = GetGroundZFor_3dCoord(AllProps[i].x, AllProps[i].y, AllProps[i].z)
+            local attempts = 0
+            while not found and attempts < 200 do -- up to 10 seconds
+                Wait(50)
+                found, z = GetGroundZFor_3dCoord(AllProps[i].x, AllProps[i].y, AllProps[i].z)
+                attempts = attempts + 1
+            end
+            if found then groundZ = z end
+            data.obj = CreateObject(modelHash, AllProps[i].x, AllProps[i].y, groundZ + -0.2, false, false, false)
+            SetEntityHeading(data.obj, AllProps[i].h or 0.0)
+            SetEntityAsMissionEntity(data.obj, true)
+            Wait(1000)
+            FreezeEntityPosition(data.obj, true)
+            SetModelAsNoLongerNeeded(data.obj)
+            data.id = AllProps[i].id
+            SpawnedProps[#SpawnedProps + 1] = data
+            hasSpawned = false
+            ::continue::
+        end
+        if not InRange then
+            Wait(5000)
         end
     end
 end)
 
--- Load all props from DB and store in Props table
-RegisterServerEvent('ds-propplacer:server:getProps')
-AddEventHandler('ds-propplacer:server:getProps', function()
-    local result = exports.oxmysql:query_async('SELECT * FROM ds_props', {})
-    if not result or not result[1] then return end
-    for i = 1, #result do
-        local propData = nil
-        local success, err = pcall(function()
-            propData = json.decode(result[i].properties)
-        end)
-        if success and propData then
-            local id = propData.id or result[i].propid
-            propData.id = id
-            Props[id] = propData
-        else
-            print('[ds-propplacer] Error decoding propData:', err, result[i])
+RegisterNetEvent('ds-propplacer:client:removePropObject', function(propid)
+    print('[ds-propplacer] Client removePropObject called with propid:', propid)
+    for i = #SpawnedProps, 1, -1 do
+        local p = SpawnedProps[i]
+            if p and tostring(p.id) == tostring(propid) then
+                if DoesEntityExist(p.obj) then
+                    DeleteEntity(p.obj)
+                end
+                table.remove(SpawnedProps, i)
         end
     end
-end)
-
-RegisterNetEvent('ds-propplacer:server:getProps')
-AddEventHandler('ds-propplacer:server:getProps', function()
-    local src = source
-    TriggerClientEvent('ds-propplacer:client:updatePropData', src, Props)
-end)
-
-RegisterServerEvent('ds-propplacer:server:newProp')
-AddEventHandler('ds-propplacer:server:newProp', function(proptype, position, heading, hash)
-    local src = source
-    local Player = RSGCore.Functions.GetPlayer(src)
-    if not hasPermission(Player, "place") then
-        TriggerClientEvent('ox_lib:notify', src, {title = 'No permission to place props.', type = 'error', duration = 7000})
-        return
-    end
-
-    local PropData = {
-        proptype = proptype,
-        x = position.x,
-        y = position.y,
-        z = position.z,
-        h = heading,
-        hash = hash,
-        builder = Player.PlayerData.citizenid,
-        buildttime = os.time()
-    }
-
-    exports.oxmysql:insert('INSERT INTO ds_props (properties, citizenid, proptype) VALUES (?, ?, ?)', {
-        json.encode(PropData),
-        Player.PlayerData.citizenid,
-        proptype
-    }, function(insertId)
-        if insertId then
-            Props[insertId] = PropData
-            TriggerClientEvent('ds-propplacer:client:propPlaced', src, insertId)
-            TriggerClientEvent('ds-propplacer:client:updatePropData', -1, { [insertId] = PropData })
-        else
-            TriggerClientEvent('ox_lib:notify', src, {title = 'DB error: Could not place prop.', type = 'error', duration = 7000})
-        end
-    end)
-end)
-
-RegisterServerEvent('ds-propplacer:server:removeProp')
-AddEventHandler('ds-propplacer:server:removeProp', function(propid)
-    local src = source
-    local Player = RSGCore.Functions.GetPlayer(src)
-    if not hasPermission(Player, "remove") then
-        TriggerClientEvent('ox_lib:notify', src, {title = 'No permission to delete props.', type = 'error', duration = 7000 })
-        return
-    end
-    exports.oxmysql:execute('DELETE FROM ds_props WHERE propid = @propid', {['@propid'] = propid}, function(result)
-        if result then
-            Props[propid] = nil
-            TriggerClientEvent('ds-propplacer:client:removePropObject', -1, propid)
-            TriggerClientEvent('ds-propplacer:client:updatePropData', -1, { [propid] = false })
-        else
-            print('[ds-propplacer] Error deleting prop:', propid)
-            TriggerClientEvent('ox_lib:notify', src, {title = 'DB error: Could not delete prop.', type = 'error', duration = 7000 })
-        end
-    end)
 end)
