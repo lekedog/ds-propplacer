@@ -143,31 +143,24 @@ end)
 
 
 RegisterNetEvent('ds-propplacer:client:updatePropData', function(props)
-    print('[ds-propplacer] Props table received:', json.encode(props))
     -- Build new AllProps table
     local newProps = {}
+    local newPropIds = {}
     for id, propData in pairs(props) do
         if type(propData) == "boolean" then goto continue end
         propData.id = id
         newProps[#newProps + 1] = propData
+        newPropIds[tostring(id)] = true
         ::continue::
     end
 
     -- Remove any spawned props that are no longer present
-    for i = #SpawnedProps, 1, -1 do
-        local found = false
-        local p = SpawnedProps[i]
-        for _, np in ipairs(newProps) do
-            if tostring(np.id) == tostring(p.id) then
-                found = true
-                break
-            end
-        end
-        if not found then
+    for id, p in pairs(SpawnedProps) do
+        if not newPropIds[tostring(id)] then
             if DoesEntityExist(p.obj) then
                 DeleteEntity(p.obj)
             end
-            table.remove(SpawnedProps, i)
+            SpawnedProps[id] = nil
         end
     end
 
@@ -183,15 +176,9 @@ CreateThread(function()
             local prop = vector3(AllProps[i].x, AllProps[i].y, AllProps[i].z)
             local dist = #(pos - prop)
             if dist >= 50.0 then goto continue end
-            local hasSpawned = false
+            local id = tostring(AllProps[i].id)
+            if SpawnedProps[id] then goto continue end
             InRange = true
-            for z = 1, #SpawnedProps do
-                local p = SpawnedProps[z]
-                if p and p.id == AllProps[i].id then
-                    hasSpawned = true
-                end
-            end
-            if hasSpawned then goto continue end
             local modelHash = AllProps[i].hash
             if not modelHash then goto continue end
             RequestAndLoadModel(modelHash)
@@ -205,15 +192,14 @@ CreateThread(function()
                 attempts = attempts + 1
             end
             if found then groundZ = z end
-            data.obj = CreateObject(modelHash, AllProps[i].x, AllProps[i].y, groundZ + -0.2, false, false, false)
+            data.obj = CreateObject(modelHash, AllProps[i].x, AllProps[i].y, groundZ - 0.2, false, false, false)
             SetEntityHeading(data.obj, AllProps[i].h or 0.0)
             SetEntityAsMissionEntity(data.obj, true)
             Wait(1000)
             FreezeEntityPosition(data.obj, true)
             SetModelAsNoLongerNeeded(data.obj)
             data.id = AllProps[i].id
-            SpawnedProps[#SpawnedProps + 1] = data
-            hasSpawned = false
+            SpawnedProps[id] = data
             ::continue::
         end
         if not InRange then
@@ -224,13 +210,10 @@ end)
 
 RegisterNetEvent('ds-propplacer:client:removePropObject', function(propid)
     print('[ds-propplacer] Client removePropObject called with propid:', propid)
-    for i = #SpawnedProps, 1, -1 do
-        local p = SpawnedProps[i]
-            if p and tostring(p.id) == tostring(propid) then
-                if DoesEntityExist(p.obj) then
-                    DeleteEntity(p.obj)
-                end
-                table.remove(SpawnedProps, i)
-        end
+    local id = tostring(propid)
+    local p = SpawnedProps[id]
+    if p and DoesEntityExist(p.obj) then
+        DeleteEntity(p.obj)
     end
+    SpawnedProps[id] = nil
 end)
