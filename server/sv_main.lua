@@ -2,6 +2,7 @@ local RSGCore = exports['rsg-core']:GetCoreObject()
 local Config = load(LoadResourceFile(GetCurrentResourceName(), 'config.lua'))()
 local SERVER_OWNER_CITIZENID = Config.ServerOwnerCitizenId
 local Props = {}
+local PropsLoaded = false
 
 -- propid will be integer autoincrement from DB
 
@@ -21,21 +22,38 @@ end
 
 -- Load all props from DB on resource start
 CreateThread(function()
-    exports.oxmysql:fetch('SELECT * FROM ds_props', {}, function(result)
-        if result then
-            for i = 1, #result do
-                local propData = nil
-                local success, err = pcall(function()
-                    propData = json.decode(result[i].properties)
-                end)
-                if success and propData and propData.id then
-                    Props[propData.id] = propData
-                else
-                    print('[ds-propplacer] Error decoding propData:', err, result[i])
-                end
-            end
+    TriggerEvent('ds-propplacer:server:getProps')
+    PropsLoaded = true
+end)
+
+-- Periodically sync props to all clients
+CreateThread(function()
+    while true do
+        Wait(5000)
+        if PropsLoaded then
+            TriggerClientEvent('ds-propplacer:client:updatePropData', -1, Props)
         end
-    end)
+    end
+end)
+
+-- Load all props from DB and store in Props table
+RegisterServerEvent('ds-propplacer:server:getProps')
+AddEventHandler('ds-propplacer:server:getProps', function()
+    local result = exports.oxmysql:query_async('SELECT * FROM ds_props', {})
+    if not result or not result[1] then return end
+    for i = 1, #result do
+        local propData = nil
+        local success, err = pcall(function()
+            propData = json.decode(result[i].properties)
+        end)
+        if success and propData then
+            local id = propData.id or result[i].propid
+            propData.id = id
+            Props[id] = propData
+        else
+            print('[ds-propplacer] Error decoding propData:', err, result[i])
+        end
+    end
 end)
 
 RegisterNetEvent('ds-propplacer:server:getProps')
