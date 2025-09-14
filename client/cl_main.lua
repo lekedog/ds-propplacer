@@ -192,7 +192,7 @@ CreateThread(function()
                 attempts = attempts + 1
             end
             if found then groundZ = z end
-            data.obj = CreateObject(modelHash, AllProps[i].x, AllProps[i].y, groundZ - 0.2, false, false, false)
+            data.obj = CreateObject(modelHash, AllProps[i].x, AllProps[i].y, groundZ, false, false, false)
             SetEntityHeading(data.obj, AllProps[i].h or 0.0)
             SetEntityAsMissionEntity(data.obj, true)
             Wait(1000)
@@ -216,4 +216,5 @@ RegisterNetEvent('ds-propplacer:client:removePropObject', function(propid)
         DeleteEntity(p.obj)
     end
     SpawnedProps[id] = nil
+    exports['ox_lib']:notify({title = 'Prop removed successfully!', type = 'success', duration = 5000})
 end)
