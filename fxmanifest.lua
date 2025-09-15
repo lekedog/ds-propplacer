@@ -18,5 +18,6 @@ client_scripts {
 }
 
 server_scripts {
-   'server/sv_main.lua'
+   'server/sv_main.lua',
+   'server/versionchecker.lua'
 }
