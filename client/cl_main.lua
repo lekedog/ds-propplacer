@@ -4,6 +4,7 @@ local SpawnedProps = {}
 local AllProps = {}
 local PromptPlacerGroup = GetRandomIntInRange(0, 0xffffff)
 local CancelPrompt, SetPrompt, RotateLeftPrompt, RotateRightPrompt
+local lastPlacedPropId = nil
 
 -- Utility: Register prompts
 local function RegisterPrompt(name, control, holdMode, standardMode)
@@ -106,6 +107,7 @@ function PropPlacer(proptype, ObjectModel)
 end
 
 RegisterNetEvent('ds-propplacer:client:propPlaced', function(propId)
+    lastPlacedPropId = propId
     exports['ox_lib']:notify({title = 'Prop placed! ID: '..tostring(propId), type = 'success', duration = 7000})
 end)
 --------------------------------------------------------
@@ -130,6 +132,14 @@ RegisterCommand('removeprop', function(source, args, rawCommand)
         TriggerServerEvent('ds-propplacer:server:removeProp', tonumber(propid))
     else
         exports['ox_lib']:notify({title = 'Usage: /removeprop [propid]', type = 'error', duration = 5000})
+    end
+end)
+
+RegisterCommand('removelastprop', function()
+    if lastPlacedPropId then
+        TriggerServerEvent('ds-propplacer:server:removeProp', tonumber(lastPlacedPropId))
+    else
+        exports['ox_lib']:notify({title = 'No prop to remove!', type = 'error', duration = 5000})
     end
 end)
 --------------------------------------------------------
