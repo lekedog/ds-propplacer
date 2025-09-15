@@ -1,7 +1,7 @@
 description 'RSG Core Prop Placer'
 author 'LekedogTV'
 
-version '1.0.1'
+version '1.0.2'
 
 dependency 'rsg-core'
 
