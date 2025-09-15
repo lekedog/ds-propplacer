@@ -10,20 +10,16 @@ local function CheckVersion()
     PerformHttpRequest('https://raw.githubusercontent.com/lekedog/ds-versioncheckers/main/ds-propplacer/version.txt', function(err, text, headers)
         local currentVersion = GetResourceMetadata(GetCurrentResourceName(), 'version')
 
-        -- current version matched
-        if text == currentVersion then 
-            versionCheckPrint('success', 'You are running the latest version: '..currentVersion)
-            return
-        end
-
-        -- not able to check version
         if not text then
             versionCheckPrint('error', 'Currently unable to run a version check.')
             return
         end
 
-        -- current version did not match
-        if text ~= currentVersion then
+        versionCheckPrint('success', ('Current Version: %s'):format(currentVersion))
+        versionCheckPrint('success', ('Latest Version: %s'):format(text))
+        if text == currentVersion then
+            versionCheckPrint('success', 'You are running the latest version.')
+        else
             versionCheckPrint('error', ('You are currently running an outdated version, please update to version %s'):format(text))
         end
     end)
